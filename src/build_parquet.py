@@ -96,15 +96,31 @@ def _df_to_arrow(df: pd.DataFrame, date: datetime) -> pa.Table:
     return pa.Table.from_pandas(df, schema=SCHEMA, preserve_index=False)
 
 
-def _write_day(table: pa.Table, out_dir: Path) -> None:
-    """Append a single day's Arrow table to the partitioned Parquet dataset."""
-    pq.write_to_dataset(
-        table,
-        root_path=str(out_dir),
-        partition_cols=["year", "month"],
-        existing_data_behavior="overwrite_or_ignore",
-        basename_template="{i}.parquet",
-    )
+def _write_day(table: pa.Table, out_dir: Path, date: datetime) -> None:
+    """Merge a single day's data into its monthly partition file.
+
+    Reads any existing data for the same year/month partition, concatenates
+    the new day, deduplicates on dmas_time, and rewrites as a single
+    ``data.parquet`` file.  This keeps one file per month while allowing
+    day-by-day incremental builds without filename collisions.
+    """
+    year, month = date.year, date.month
+    partition_dir = out_dir / f"year={year}" / f"month={month}"
+    partition_dir.mkdir(parents=True, exist_ok=True)
+    partition_file = partition_dir / "data.parquet"
+
+    if partition_file.exists():
+        existing = pq.read_table(partition_file, schema=SCHEMA)
+        combined = pa.concat_tables([existing, table])
+    else:
+        combined = table
+
+    # Deduplicate on dmas_time, keep last occurrence, sort chronologically
+    df = combined.to_pandas()
+    df = df.drop_duplicates(subset="dmas_time", keep="last").sort_values("dmas_time")
+    combined = pa.Table.from_pandas(df, schema=SCHEMA, preserve_index=False)
+
+    pq.write_table(combined, partition_file)
 
 
 # --------------------------------------------------------------------------- #
@@ -181,14 +197,14 @@ def run_incremental_build(
                 n_empty += 1
                 continue
 
-            parsed_df = parse_day_df(raw_df)
+            parsed_df = parse_day_df(raw_df, source_file=day.strftime("%Y-%m-%d"))
             if parsed_df.empty:
                 logger.warning("All lines failed to parse for %s", day.date())
                 n_empty += 1
                 continue
 
             table = _df_to_arrow(parsed_df, day)
-            _write_day(table, out_dir)
+            _write_day(table, out_dir, day)
             n_ok += 1
 
         except Exception as exc:
