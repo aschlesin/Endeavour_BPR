@@ -1,4 +1,21 @@
+# Secrets
 .env
+
+# Generated output
 out/
 *.csv
+
+# Development / scratch files
 test.py
+AGENT.md
+
+# Python byte-code (all directories, not just root)
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments (if someone creates one inside the project)
+.venv/
+env/
+venv/

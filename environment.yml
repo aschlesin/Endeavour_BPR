@@ -1,0 +1,16 @@
+name: bpr-nchr
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas
+  - pyarrow
+  - tqdm
+  - jupyter
+  - ipykernel
+  - pip
+  - pip:
+      - onc           # ONC Python API client (conda-forge package not available)
+      - python-dotenv # load .env files into os.environ
