@@ -13,11 +13,10 @@ Usage (from a notebook or script):
 The output is a Hive-partitioned Parquet dataset at ``out/NCHR_BPR_raw.parquet/``
 partitioned by ``year`` and ``month``, which can be read back with:
 
-    import pandas as pd
-    import pyarrow.dataset as ds
-
-    dataset = ds.dataset('out/NCHR_BPR_raw.parquet', format='parquet', partitioning='hive')
-    df = dataset.to_table().to_pandas()
+    from src.build_parquet import load_dataset
+    df = load_dataset()
+    # or a date-filtered subset:
+    df = load_dataset(date_from='2025-01-01', date_to='2026-01-01')
 """
 
 import logging
@@ -48,8 +47,6 @@ SCHEMA = pa.schema(
         pa.field("xFP",                pa.int64()),
         pa.field("X_period_us",        pa.float64()),
         pa.field("T_period_us",        pa.float64()),
-        pa.field("year",               pa.int16()),
-        pa.field("month",              pa.int8()),
     ]
 )
 
@@ -66,11 +63,13 @@ def _last_stored_date(out_dir: Path) -> datetime | None:
     if not out_dir.exists():
         return None
     try:
-        dataset = ds.dataset(str(out_dir), format="parquet", partitioning="hive")
-        table = dataset.to_table(columns=["dmas_time"])
-        if table.num_rows == 0:
+        files = sorted(out_dir.rglob("*.parquet"))
+        if not files:
             return None
-        max_ts = table.column("dmas_time").to_pandas().max()
+        # Read only dmas_time from all files, find the maximum
+        tables = [pq.read_table(f, columns=["dmas_time"], schema=SCHEMA) for f in files]
+        all_times = pa.concat_tables(tables).column("dmas_time").to_pandas()
+        max_ts = all_times.max()
         return pd.Timestamp(max_ts).to_pydatetime().replace(tzinfo=timezone.utc)
     except Exception as exc:
         logger.warning("Could not read existing dataset: %s", exc)
@@ -85,9 +84,6 @@ def _df_to_arrow(df: pd.DataFrame, date: datetime) -> pa.Table:
     df["t_housing_counts"] = df["t_housing_counts"].astype("Int32")
     df["xFT"] = df["xFT"].astype("Int64")
     df["xFP"] = df["xFP"].astype("Int64")
-
-    df["year"]  = pa.array([date.year]  * len(df), type=pa.int16())
-    df["month"] = pa.array([date.month] * len(df), type=pa.int8())
 
     # Cast timestamps to plain (non-tz) microsecond timestamps for Arrow
     for col in ("dmas_time", "ppc_time"):
@@ -237,16 +233,18 @@ def load_dataset(
     -------
     pd.DataFrame indexed by ``dmas_time``.
     """
-    dataset = ds.dataset(str(out_dir), format="parquet", partitioning="hive")
+    out_dir = Path(out_dir)
+    files = sorted(out_dir.rglob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"No Parquet files found in {out_dir}")
 
-    filters = []
-    if date_from:
-        filters.append(ds.field("dmas_time") >= pd.Timestamp(date_from))
-    if date_to:
-        filters.append(ds.field("dmas_time") < pd.Timestamp(date_to))
-
-    table = dataset.to_table(filter=(filters[0] if len(filters) == 1 else
-                                     pa.compute.and_(*filters)) if filters else None)
-    df = table.to_pandas()
+    tables = [pq.read_table(f, schema=SCHEMA) for f in files]
+    df = pa.concat_tables(tables).to_pandas()
     df = df.set_index("dmas_time").sort_index()
+
+    if date_from:
+        df = df[df.index >= pd.Timestamp(date_from)]
+    if date_to:
+        df = df[df.index < pd.Timestamp(date_to)]
+
     return df
