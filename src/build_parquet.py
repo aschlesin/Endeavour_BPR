@@ -26,7 +26,6 @@ from pathlib import Path
 
 import pandas as pd
 import pyarrow as pa
-import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
@@ -59,20 +58,23 @@ DEFAULT_OUT_DIR = Path(__file__).parents[1] / "out" / "NCHR_BPR_raw.parquet"
 # --------------------------------------------------------------------------- #
 
 def _last_stored_date(out_dir: Path) -> datetime | None:
-    """Return the last date already stored in the Parquet dataset, or None."""
+    """Return the last date already stored in the Parquet dataset, or None.
+
+    Files are named ``YYYYMMDD.parquet`` so the lexicographic maximum filename
+    directly gives the latest stored day — no file reading required.
+    """
     if not out_dir.exists():
         return None
     try:
         files = sorted(out_dir.rglob("*.parquet"))
         if not files:
             return None
-        # Read only dmas_time from all files, find the maximum
-        tables = [pq.read_table(f, columns=["dmas_time"], schema=SCHEMA) for f in files]
-        all_times = pa.concat_tables(tables).column("dmas_time").to_pandas()
-        max_ts = all_times.max()
-        return pd.Timestamp(max_ts).to_pydatetime().replace(tzinfo=timezone.utc)
+        # Filename stem is YYYYMMDD — parse the last one directly
+        last_stem = files[-1].stem   # e.g. '20260224'
+        last_date = datetime.strptime(last_stem, "%Y%m%d").replace(tzinfo=timezone.utc)
+        return last_date
     except Exception as exc:
-        logger.warning("Could not read existing dataset: %s", exc)
+        logger.warning("Could not determine last stored date: %s", exc)
         return None
 
 
@@ -93,30 +95,18 @@ def _df_to_arrow(df: pd.DataFrame, date: datetime) -> pa.Table:
 
 
 def _write_day(table: pa.Table, out_dir: Path, date: datetime) -> None:
-    """Merge a single day's data into its monthly partition file.
+    """Write a single day's Arrow table to its own Parquet file.
 
-    Reads any existing data for the same year/month partition, concatenates
-    the new day, deduplicates on dmas_time, and rewrites as a single
-    ``data.parquet`` file.  This keeps one file per month while allowing
-    day-by-day incremental builds without filename collisions.
+    Each day gets a dedicated file ``YYYYMMDD.parquet`` inside its
+    ``year=YYYY/month=MM/`` partition directory.  No read-back is needed,
+    so write time is constant regardless of how many days are already stored.
+    If the file already exists (re-run of the same day) it is overwritten.
     """
     year, month = date.year, date.month
     partition_dir = out_dir / f"year={year}" / f"month={month}"
     partition_dir.mkdir(parents=True, exist_ok=True)
-    partition_file = partition_dir / "data.parquet"
-
-    if partition_file.exists():
-        existing = pq.read_table(partition_file, schema=SCHEMA)
-        combined = pa.concat_tables([existing, table])
-    else:
-        combined = table
-
-    # Deduplicate on dmas_time, keep last occurrence, sort chronologically
-    df = combined.to_pandas()
-    df = df.drop_duplicates(subset="dmas_time", keep="last").sort_values("dmas_time")
-    combined = pa.Table.from_pandas(df, schema=SCHEMA, preserve_index=False)
-
-    pq.write_table(combined, partition_file)
+    partition_file = partition_dir / f"{date.strftime('%Y%m%d')}.parquet"
+    pq.write_table(table, partition_file)
 
 
 # --------------------------------------------------------------------------- #
