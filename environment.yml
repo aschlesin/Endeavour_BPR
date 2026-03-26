@@ -14,3 +14,4 @@ dependencies:
   - pip:
       - onc           # ONC Python API client (conda-forge package not available)
       - python-dotenv # load .env files into os.environ
+      - nbstripout    # strip notebook outputs from git diffs
