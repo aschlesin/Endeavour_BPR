@@ -27,8 +27,12 @@ ONC API  →  fetch_raw.py  →  parse_hex.py  →  Parquet dataset  →  Calibr
 │   ├── calibrateBPRData.py       # Paroscientific & Platinum RTD calibration functions
 │   ├── parosci.txt               # Paroscientific calibration coefficients (by serial #)
 │   └── platinum.txt              # Platinum RTD calibration coefficients (by hex ID)
+├── environment.yml               # Conda environment definition (bpr-nchr)
+├── .env.example                  # Template for ONC_TOKEN secret
+├── .gitattributes                # nbstripout filter — strips notebook outputs from git
 ├── out/                          # Generated output — gitignored
-│   └── NCHR_BPR_raw.parquet/     # Hive-partitioned Parquet dataset (year / month)
+│   ├── NCHR_BPR_raw.parquet/     # Parquet dataset partitioned by year/month/day
+│   └── parse_errors.log          # Hex-line parse failures (appended each run)
 ├── AGENT.md                      # Developer notes and design decisions
 └── .env                          # ONC_TOKEN secret — gitignored
 ```
@@ -100,7 +104,7 @@ This notebook:
 
 ## Parquet Dataset Schema
 
-The dataset at `out/NCHR_BPR_raw.parquet/` is Hive-partitioned by `year` and `month`.
+Each day is stored as an independent `YYYYMMDD.parquet` file under `out/NCHR_BPR_raw.parquet/year=YYYY/month=MM/`. `year` and `month` are directory names only — not physical columns — to avoid PyArrow schema conflicts.
 
 | Column | Type | Description |
 |---|---|---|
@@ -127,6 +131,12 @@ df = load_dataset()
 # Date-filtered subset
 df = load_dataset(date_from='2024-01-01', date_to='2025-01-01')
 ```
+
+---
+
+## Parse Error Log
+
+Failed hex lines are recorded in `out/parse_errors.log` (gitignored). Each entry includes the source date, the failure reason, and the raw hex string. A session-start header and a per-day summary count are written automatically by `parse_hex.py`.
 
 ---
 
