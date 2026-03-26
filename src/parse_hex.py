@@ -74,7 +74,11 @@ def _freq_periods(xFT: int, xFP: int):
     return X, T
 
 
-def parse_hex_line(reading: str, source_file: str = "") -> Optional[dict]:
+def parse_hex_line(
+    reading: str,
+    source_file: str = "",
+    dmas_time: str = "",
+) -> Optional[dict]:
     """Parse a single raw ASCII hex reading string.
 
     Parameters
@@ -83,7 +87,11 @@ def parse_hex_line(reading: str, source_file: str = "") -> Optional[dict]:
         Raw hex string from the ONC API ``readings`` column,
         e.g. ``'4599A163B9C5BA3B29D8FC3B6AACED5900'``.
     source_file:
-        Optional label (e.g. date string) included in error log entries.
+        Optional label (e.g. date string ``'2025-01-15'``) included in
+        error log entries to identify which day the bad line came from.
+    dmas_time:
+        Optional timestamp string of this reading, included in error log
+        entries for precise fault localisation.
 
     Returns
     -------
@@ -93,12 +101,14 @@ def parse_hex_line(reading: str, source_file: str = "") -> Optional[dict]:
         ``T_period_us`` (float).
         Returns ``None`` if the line cannot be parsed.
     """
+    hex_block_str: str = ""          # filled as soon as we extract it
     try:
         hex_block = _HEX_PATTERN.search(reading)
         if hex_block is None:
             raise ValueError("no hex block found")
+        hex_block_str = hex_block.group(0)
 
-        chunks = _CHUNK_PATTERN.findall(hex_block.group(0))
+        chunks = _CHUNK_PATTERN.findall(hex_block_str)
         if len(chunks) < 4:
             raise ValueError(f"expected >=4 chunks, got {len(chunks)}")
 
@@ -129,11 +139,15 @@ def parse_hex_line(reading: str, source_file: str = "") -> Optional[dict]:
         }
 
     except Exception as exc:
+        # Log the extracted hex block when available; fall back to the raw
+        # API string so the offending bytes are always recorded.
+        logged_hex = hex_block_str if hex_block_str else reading
         parse_error_logger.warning(
-            "PARSE_ERROR  file=%-24s  reason=%-40s  raw=%s",
+            "PARSE_ERROR  file=%-24s  time=%-26s  reason=%-40s  hex=%s",
             source_file or "<unknown>",
+            dmas_time or "<unknown>",
             str(exc),
-            reading,
+            logged_hex,
         )
         logger.debug("Failed to parse line %r: %s", reading, exc)
         return None
@@ -163,7 +177,11 @@ def parse_day_df(raw_df: pd.DataFrame, source_file: str = "") -> pd.DataFrame:
     n_failed = 0
 
     for dmas_time, reading in zip(raw_df["dmas_time"], raw_df["readings"]):
-        parsed = parse_hex_line(str(reading), source_file=source_file)
+        parsed = parse_hex_line(
+            str(reading),
+            source_file=source_file,
+            dmas_time=str(dmas_time),
+        )
         if parsed is None:
             n_failed += 1
             continue

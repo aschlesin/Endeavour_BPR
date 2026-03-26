@@ -136,7 +136,22 @@ df = load_dataset(date_from='2024-01-01', date_to='2025-01-01')
 
 ## Parse Error Log
 
-Failed hex lines are recorded in `out/parse_errors.log` (gitignored). Each entry includes the source date, the failure reason, and the raw hex string. A session-start header and a per-day summary count are written automatically by `parse_hex.py`.
+Failed hex lines are recorded in `out/parse_errors.log` (gitignored). Each `PARSE_ERROR` entry includes:
+
+| Field | Description |
+|---|---|
+| `file=` | Source date (e.g. `2025-01-15`) identifying which day the bad line came from |
+| `time=` | `dmas_time` timestamp of the specific reading from the ONC API |
+| `reason=` | Exception message explaining why parsing failed |
+| `hex=` | The extracted hex block (or the raw API string if hex extraction itself failed) |
+
+A session-start header and a per-day `SUMMARY` line (total / failed / ok counts) are also written automatically by `parse_hex.py`.
+
+Example entry:
+```
+2025-01-15T03:42:11Z  PARSE_ERROR  file=2025-01-15           time=2025-01-15 03:42:11  reason=expected >=4 chunks, got 2              hex=4599A163B9C5
+2025-01-15T03:42:12Z  SUMMARY      file=2025-01-15           total=86400  failed=1  ok=86399
+```
 
 ---
 

@@ -123,7 +123,7 @@ def run_incremental_build(
 ) -> None:
     """Fetch, parse, and append BPR data day-by-day to the Parquet dataset.
 
-    Already-stored days (detected by the latest timestamp in the dataset)
+    Already-stored days (detected from existing ``YYYYMMDD.parquet`` filenames)
     are skipped automatically.
 
     Parameters
